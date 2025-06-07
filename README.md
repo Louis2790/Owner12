@@ -1,2 +1,248 @@
-# Owner12
-hiden and seek
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hide & Seek Spiel</title>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; padding: 0; }
+  header { background: #333; color: white; padding: 1em; text-align: center; }
+  section { padding: 1em; }
+  input, button { margin: 0.5em 0; padding: 0.5em; width: 100%; box-sizing: border-box; }
+  .hidden { display: none; }
+  #map { height: 60vh; }
+  a { cursor: pointer; color: blue; text-decoration: underline; }
+</style>
+</head>
+<body>
+<header>Hide & Seek Spiel</header>
+
+<section id="loginSection">
+  <h2>Login</h2>
+  <input type="text" id="loginUsername" placeholder="Benutzername" autocomplete="username" />
+  <input type="password" id="loginPassword" placeholder="Passwort" autocomplete="current-password" />
+  <label><input type="checkbox" id="showLoginPass" /> Passwort anzeigen</label>
+  <button onclick="login()">Login</button>
+  <p>Kein Konto? <a onclick="showRegister()">Hier registrieren</a></p>
+</section>
+
+<section id="registerSection" class="hidden">
+  <h2>Registrieren</h2>
+  <input type="text" id="regUsername" placeholder="Benutzername" autocomplete="username" />
+  <input type="password" id="regPassword" placeholder="Passwort" autocomplete="new-password" />
+  <input type="password" id="regPassword2" placeholder="Passwort wiederholen" autocomplete="new-password" />
+  <label><input type="checkbox" id="showRegPass" /> Passwort anzeigen</label>
+  <button onclick="register()">Registrieren</button>
+  <p>Schon ein Konto? <a onclick="showLogin()">Hier einloggen</a></p>
+</section>
+
+<section id="adminGroupSection" class="hidden">
+  <h2>Gruppe erstellen (Admin)</h2>
+  <button onclick="createGroup()">Gruppe erstellen</button>
+  <p id="groupCodeDisplay"></p>
+</section>
+
+<section id="playerJoinSection" class="hidden">
+  <h2>Gruppe beitreten</h2>
+  <input type="text" id="joinGroupCode" placeholder="Gruppencode eingeben" autocomplete="off" />
+  <button onclick="joinGroup()">Beitreten</button>
+</section>
+
+<section id="adminPanel" class="hidden">
+  <h2>Admin Panel</h2>
+  <p>Spieler in Gruppe:</p>
+  <ul id="playerList"></ul>
+  <label>Seeker auswählen:
+    <select id="seekerSelect"></select>
+  </label>
+  <button onclick="setSeeker()">Seeker festlegen</button>
+</section>
+
+<section id="gameSection" class="hidden">
+  <h2>Spiel läuft</h2>
+  <div id="map"></div>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // Benutzer-DB (nur lokal im Speicher)
+  const users = [{ username: "Admin12", password: "Admin12!" }];
+  let currentUser = null;
+  let groupCode = localStorage.getItem("groupCode") || "";
+  let players = [];
+  let seeker = null;
+  let map = null;
+  let markers = [];
+
+  // Passwort Sichtbarkeit
+  document.getElementById("showRegPass").addEventListener("change", e => {
+    const type = e.target.checked ? "text" : "password";
+    document.getElementById("regPassword").type = type;
+    document.getElementById("regPassword2").type = type;
+  });
+  document.getElementById("showLoginPass").addEventListener("change", e => {
+    document.getElementById("loginPassword").type = e.target.checked ? "text" : "password";
+  });
+
+  // Bereiche wechseln
+  function showRegister() {
+    document.getElementById("loginSection").classList.add("hidden");
+    document.getElementById("registerSection").classList.remove("hidden");
+  }
+  function showLogin() {
+    document.getElementById("registerSection").classList.add("hidden");
+    document.getElementById("loginSection").classList.remove("hidden");
+  }
+
+  // Registrierung
+  function register() {
+    const u = document.getElementById("regUsername").value.trim();
+    const p1 = document.getElementById("regPassword").value;
+    const p2 = document.getElementById("regPassword2").value;
+    if (!u || !p1 || !p2) return alert("Bitte alle Felder ausfüllen!");
+    if (p1 !== p2) return alert("Passwörter stimmen nicht überein!");
+    if (users.find(uObj => uObj.username === u)) return alert("Benutzername existiert schon!");
+    users.push({ username: u, password: p1 });
+    alert("Registrierung erfolgreich! Bitte jetzt einloggen.");
+    showLogin();
+  }
+
+  // Login
+  function login() {
+    const u = document.getElementById("loginUsername").value.trim();
+    const p = document.getElementById("loginPassword").value;
+    const user = users.find(uObj => uObj.username === u && uObj.password === p);
+    if (!user) return alert("Falscher Benutzername oder Passwort!");
+    currentUser = { username: u, isAdmin: u === "Admin12", lat: null, lng: null };
+    alert("Erfolgreich eingeloggt als " + u);
+    document.getElementById("loginSection").classList.add("hidden");
+    if (currentUser.isAdmin) {
+      document.getElementById("adminGroupSection").classList.remove("hidden");
+      if(groupCode) {
+        document.getElementById("groupCodeDisplay").textContent = "Gruppencode: " + groupCode;
+        document.getElementById("adminPanel").classList.remove("hidden");
+      }
+    } else {
+      document.getElementById("playerJoinSection").classList.remove("hidden");
+    }
+  }
+
+  // Gruppe erstellen (Admin)
+  function createGroup() {
+    groupCode = "HID" + Math.floor(1000 + Math.random() * 9000);
+    localStorage.setItem("groupCode", groupCode);
+    document.getElementById("groupCodeDisplay").textContent = "Gruppencode: " + groupCode;
+    document.getElementById("adminPanel").classList.remove("hidden");
+  }
+
+  // Gruppe beitreten (Spieler)
+  function joinGroup() {
+    const enteredCode = document.getElementById("joinGroupCode").value.trim();
+    if (enteredCode !== groupCode) {
+      alert("Falscher Gruppencode!");
+      return;
+    }
+    // Spielername egal → generieren
+    const randomName = "Spieler" + (players.length + 1);
+    const newPlayer = { name: randomName, lat: null, lng: null };
+    players.push(newPlayer);
+    alert("Beigetreten als " + randomName);
+    document.getElementById("playerJoinSection").classList.add("hidden");
+    startTracking(newPlayer);
+    if(!map) initMap();
+    document.getElementById("gameSection").classList.remove("hidden");
+  }
+
+  // Admin Panel Spieler & Seeker anzeigen
+  function updateAdminPanel() {
+    if (!currentUser?.isAdmin) return;
+    const playerListElem = document.getElementById("playerList");
+    const seekerSelectElem = document.getElementById("seekerSelect");
+    playerListElem.innerHTML = "";
+    seekerSelectElem.innerHTML = "";
+    players.forEach(p => {
+      const li = document.createElement("li");
+      li.textContent = p.name;
+      playerListElem.appendChild(li);
+      const option = document.createElement("option");
+      option.value = p.name;
+      option.textContent = p.name;
+      seekerSelectElem.appendChild(option);
+    });
+  }
+  setInterval(updateAdminPanel, 1000);
+
+  // Seeker wählen
+  function setSeeker() {
+    const select = document.getElementById("seekerSelect");
+    const name = select.value;
+    seeker = players.find(p => p.name === name);
+    alert(name + " ist jetzt der Seeker!");
+  }
+
+  // Karte initialisieren
+  function initMap() {
+    map = L.map("map").setView([51.1657, 10.4515], 6); // Mitte Deutschland
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+    }).addTo(map);
+  }
+
+  // Standort tracken
+  function startTracking(player) {
+    if (!navigator.geolocation) {
+      alert("Geolocation nicht verfügbar!");
+      return;
+    }
+    navigator.geolocation.watchPosition(pos => {
+      player.lat = pos.coords.latitude;
+      player.lng = pos.coords.longitude;
+      updateMap();
+    }, err => alert("Fehler beim Standort: " + err.message), {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 5000,
+    });
+  }
+
+  // Map aktualisieren
+  function updateMap() {
+    if (!map) return;
+    // Marker entfernen
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+
+    players.forEach(p => {
+      if (!p.lat || !p.lng) return;
+      const isSeeker = seeker && seeker.name === p.name;
+
+      // Seeker sieht alle Marker
+      // Hider sehen alle außer Seeker
+      let showMarker = false;
+      if (currentUser.isAdmin || (seeker && currentUser.username === seeker.name)) {
+        showMarker = true;
+      } else {
+        if (!isSeeker) showMarker = true;
+      }
+      if (!showMarker) return;
+
+      const marker = L.marker([p.lat, p.lng], {
+        title: p.name,
+      }).addTo(map);
+      marker.bindPopup(p.name + (isSeeker ? " (Seeker)" : ""));
+      markers.push(marker);
+    });
+
+    // Karte auf aktuellen Spieler zoomen (nur wenn Spieler vorhanden)
+    const me = players.find(p => p.name === currentUser.username);
+    if (me && me.lat && me.lng) {
+      map.setView([me.lat, me.lng], 18);
+    }
+  }
+</script>
+</body>
+</html>
